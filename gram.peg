@@ -1,0 +1,211 @@
+{
+package main
+
+import (
+    "fmt"
+    "strconv"
+    "errors"
+)
+
+type ValueType int
+
+const (
+    TypeInt ValueType = iota
+    TypeFloat
+    TypeString
+    TypeBoolean
+    TypeNull
+)
+
+type Value struct {
+    Type    ValueType
+    Int     int32
+    Float   float64
+    String  string
+    Boolean bool
+}
+
+var variables map[string]Value
+
+func init() {
+    variables = make(map[string]Value)
+}
+
+func setValue(name string, value Value) {
+    variables[name] = value
+}
+
+func getValue(name string) (Value, error) {
+    if v, ok := variables[name]; ok {
+        return v, nil
+    }
+    return Value{}, errors.New("undefined variable: " + name)
+}
+
+func toFloat64(v Value) float64 {
+    switch v.Type {
+    case TypeInt:
+        return float64(v.Int)
+    case TypeFloat:
+        return v.Float
+    default:
+        return 0
+    }
+}
+}
+
+Program <- Statement+
+
+Statement <- SetStmt / DefStmt / IfStmt / _ CommentLine?
+
+SetStmt <- "Set" _ varName:Identifier _ "to" _ expr:Expression asType:(_ "as" _ DataType)? _ CommentLine? {
+    value, ok := expr.(Value)
+    if !ok {
+        return nil, errors.New("invalid expression")
+    }
+    if asType != nil {
+        dataType := asType.([]interface{})[3]
+        switch dataType.(string) {
+        case "Integer":
+            value.Type = TypeInt
+            value.Int = int32(value.Float)
+        case "String":
+            value.Type = TypeString
+        case "Boolean":
+            value.Type = TypeBoolean
+        }
+    }
+    setValue(varName.(string), value)
+    return nil, nil
+}
+
+DefStmt <- "Def" _ varName:Identifier _ "as" _ dataType:DataType _ CommentLine? {
+    var value Value
+    switch dataType.(string) {
+    case "Integer":
+        value = Value{Type: TypeInt}
+    case "Float":
+        value = Value{Type: TypeFloat}
+    case "String":
+        value = Value{Type: TypeString}
+    case "Boolean":
+        value = Value{Type: TypeBoolean}
+    default:
+        return nil, errors.New("unsupported type: " + dataType.(string))
+    }
+    setValue(varName.(string), value)
+    return nil, nil
+}
+
+IfStmt <- "If" _ condition:Condition _ "then" _ thenExpr:Expression _ "else" _ elseExpr:Expression _ "." _ CommentLine? {
+    condValue, ok := condition.(bool)
+    if !ok {
+        return nil, errors.New("invalid condition")
+    }
+    if condValue {
+        return thenExpr, nil
+    }
+    return elseExpr, nil
+}
+
+Condition <- varName:Identifier _ "is" _ "Null" {
+    value, err := getValue(varName.(string))
+    if err != nil {
+        return nil, err
+    }
+    return value.Type == TypeNull, nil
+}
+
+Expression <- ArithmeticExpr / FunctionCall / Value
+
+ArithmeticExpr <- left:Term _ op:('+' / '-') _ right:Expression {
+    leftValue, ok1 := left.(Value)
+    rightValue, ok2 := right.(Value)
+    if !ok1 || !ok2 {
+        return nil, errors.New("invalid arithmetic operands")
+    }
+    result := Value{Type: TypeFloat}
+    switch op.(string) {
+    case "+":
+        result.Float = toFloat64(leftValue) + toFloat64(rightValue)
+    case "-":
+        result.Float = toFloat64(leftValue) - toFloat64(rightValue)
+    }
+    return result, nil
+}
+    / Term
+
+Term <- left:Factor _ op:('*' / '/') _ right:Term {
+    leftValue, ok1 := left.(Value)
+    rightValue, ok2 := right.(Value)
+    if !ok1 || !ok2 {
+        return nil, errors.New("invalid arithmetic operands")
+    }
+    result := Value{Type: TypeFloat}
+    switch op.(string) {
+    case "*":
+        result.Float = toFloat64(leftValue) * toFloat64(rightValue)
+    case "/":
+        result.Float = toFloat64(leftValue) / toFloat64(rightValue)
+    }
+    return result, nil
+}
+    / Factor
+
+Factor <- "(" _ expr:Expression _ ")" { return expr, nil }
+    / Number
+    / StringLiteral
+    / BooleanLiteral
+    / Identifier
+
+Number <- float:FloatLiteral {
+    f, _ := strconv.ParseFloat(float.(string), 64)
+    return Value{Type: TypeFloat, Float: f}, nil
+}
+    / integer:IntegerLiteral {
+    i, _ := strconv.Atoi(integer.(string))
+    return Value{Type: TypeInt, Int: int32(i)}, nil
+}
+
+FloatLiteral <- [0-9]+ "." [0-9]+ { return string(c.text), nil }
+
+IntegerLiteral <- [0-9]+ { return string(c.text), nil }
+
+StringLiteral <- '"' (!'"' .)* '"' {
+    return Value{Type: TypeString, String: string(c.text[1:len(c.text)-1])}, nil
+}
+
+BooleanLiteral <- ("true" / "false") {
+    b, _ := strconv.ParseBool(string(c.text))
+    return Value{Type: TypeBoolean, Boolean: b}, nil
+}
+
+Identifier <- [a-zA-Z][a-zA-Z0-9]* {
+    return string(c.text), nil
+}
+
+DataType <- "Integer" / "Float" / "String" / "Boolean"
+
+FunctionCall <- "Print" _ "(" _ expr:Expression _ ")" {
+    value, ok := expr.(Value)
+    if !ok {
+        return nil, errors.New("invalid print argument")
+    }
+    switch value.Type {
+    case TypeInt:
+        fmt.Printf("%d\n", value.Int)
+    case TypeFloat:
+        fmt.Printf("%f\n", value.Float)
+    case TypeString:
+        fmt.Printf("%s\n", value.String)
+    case TypeBoolean:
+        fmt.Printf("%t\n", value.Boolean)
+    case TypeNull:
+        fmt.Println("Null")
+    }
+    return nil, nil
+}
+
+CommentLine <- "#" [^\n]*
+
+_ "whitespace" <- [ \t\n\r]*
